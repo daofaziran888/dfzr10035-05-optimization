@@ -81,5 +81,22 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 抽样偏差复验与补采缺口（sample_check / retry_queue 联动）
+
+同一端点不同阈值的重复抽样告警，由 `app/services/deviation.py` 统一对账，
+数据落在内部台账表 `deviation_gap`（补采缺口）和 `deviation_report`（偏差报告）：
+
+- 「启动采样」按比例对调用日志做确定性等距抽样，保存样本快照（来源记录、字段值、
+  基线、偏差率、阈值、校验字段），复验口径与当时样本绑定，历史阈值可追溯。
+- 「标记告警」用样本偏差数据校验待补采范围并生成报告；缺口身份为
+  「端点+来源记录+校验字段」，两份样本的重叠缺口只登记一次，新发现缺口独立保留。
+- 值班员改阈值后走「阈值复验」（或 `POST /api/chain/deviation/recheck/{id}`），
+  新口径独立存快照、兼容历史阈值；重叠缺口不重复建重放任务，独立遗漏生成新待办。
+- 重放任务携带「关联缺口 + 取数字段/来源 + 复验绑定」，中断后重试仍按该范围核对；
+  补采成功交回证据，同一缺口的补采证据只允许成功一次（幂等）。
+- `GET /api/chain/deviation/reports|gaps|reconcile` 查询报告、缺口台账及三方对账
+  （报告汇总、重放清单与实际待补范围必须一致）。
+- 端到端验证：`cd backend && .venv/bin/python -I tests/e2e_deviation_recheck.py`。
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA

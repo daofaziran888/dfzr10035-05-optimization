@@ -1,7 +1,13 @@
-"""重放队列领域服务：管理失败请求重试，与 request_batch、call_log、api_monitor 联动。"""
+"""重放队列领域服务：管理失败请求重试，与 request_batch、call_log、api_monitor 联动。
+
+抽样偏差类任务（队列状态 sample_deviation）携带「关联缺口 + 复验绑定」，
+重试成功时按字段及来源缺口交回补采证据；同一缺口的补采证据只允许成功一次，
+因此重放中断后的重试不会重复补采两份样本的重叠缺口。
+"""
 from __future__ import annotations
 
 from app.services.base import BaseModuleService
+from app.services.deviation import DeviationService
 from app.store import store
 
 
@@ -15,6 +21,9 @@ class RetryQueueService(BaseModuleService):
     ACTION_RULES = {"加入队列": "重试中", "手动重试": "已成功", "标记失败": "永久失败"}
     NEGATIVE_ACTIONS = []
 
+    def __init__(self) -> None:
+        self.deviation = DeviationService()
+
     def run_action(self, entry_id: int, action: str):
         """重试中/已成功时联动写调用日志和更新监控；永久失败时触发告警。"""
         entry, message = super().run_action(entry_id, action)
@@ -24,12 +33,26 @@ class RetryQueueService(BaseModuleService):
             self._log_retry_start(entry)
         elif action == "手动重试":
             self._log_retry_success(entry)
+            backfill = self._backfill_gaps(entry)
             self._update_monitor_health(entry)
             message += "，已更新调用日志和监控健康上报"
+            if backfill is not None:
+                message += (
+                    f"，补采缺口{len(backfill['processed'])}个并交回证据"
+                    f"（幂等跳过已补采/重叠缺口{len(backfill['skipped'])}个）"
+                )
         elif action == "标记失败":
             self._trigger_alert(entry)
             message += "，已触发监控告警"
         return entry, message
+
+    def _backfill_gaps(self, task: dict) -> dict | None:
+        """抽样偏差任务：按关联缺口执行幂等补采并交回证据，非偏差任务返回 None。"""
+        if task.get("队列状态") != "sample_deviation":
+            return None
+        task["重试次数"] = int(task.get("重试次数", 0)) + 1
+        task["最后重试"] = "2026-11-22"
+        return self.deviation.mark_backfilled(task)
 
     def _log_retry_start(self, task: dict):
         log_rows = store.rows("call_log")

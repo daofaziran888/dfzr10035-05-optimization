@@ -165,6 +165,41 @@ def chain_sampling_coverage():
     return SampleCheckService().calc_sampling_coverage()
 
 
+@app.get("/api/chain/deviation/reports")
+def chain_deviation_reports(endpoint: str | None = None):
+    """抽样偏差报告清单：每份报告绑定当时样本快照、校验条件与字段。"""
+    from app.services.deviation import DeviationService
+    return {"items": DeviationService().list_reports(endpoint)}
+
+
+@app.get("/api/chain/deviation/gaps")
+def chain_deviation_gaps(endpoint: str | None = None):
+    """补采缺口台账：按端点/来源记录/字段唯一，含补采证据与关联重放任务。"""
+    from app.services.deviation import DeviationService
+    return {"items": DeviationService().list_gaps(endpoint)}
+
+
+@app.post("/api/chain/deviation/recheck/{check_id}")
+def chain_deviation_recheck(check_id: int, ratio: float | None = None, threshold: float | None = None):
+    """阈值变更复验：按新比例/新阈值重算偏差，兼容历史阈值，结果同步重放待办。
+
+    ratio/threshold 传小数（0.05 表示 5%）。
+    """
+    from app.services.sample_check import SampleCheckService
+    entry, message = SampleCheckService()._recheck(
+        check_id, new_ratio=ratio, new_threshold=threshold)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=message)
+    return {"ok": True, "message": message, "entry": entry}
+
+
+@app.get("/api/chain/deviation/reconcile")
+def chain_deviation_reconcile(endpoint: str | None = None):
+    """对账：抽样报告汇总与重放清单必须与实际待补范围一致。"""
+    from app.services.deviation import DeviationService
+    return DeviationService().reconcile(endpoint)
+
+
 @app.get("/api/chain/cost-overview")
 def chain_cost_overview():
     """链路19：成本全景（跨 cost_account/api_provider/call_log）"""

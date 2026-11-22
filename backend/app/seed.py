@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 SEED_ROWS: dict[str, list[dict[str, Any]]] = {
+    # 抽样偏差复验内部台账：缺口按「端点+来源记录+字段」唯一，报告绑定当时样本与校验口径。
+    "deviation_gap": [],
+    "deviation_report": [],
     "api_provider": [{'id': 1,
   'status': '已注册',
   'pending': False,
